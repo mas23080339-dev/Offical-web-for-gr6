@@ -116,7 +116,7 @@ if df.empty or vectorizer is None:
 
 product_options = df["Tên sản phẩm"].unique()
 selected_product_name = st.selectbox(
-    "1. Vui lòng CHỌN SẢN PHẨM hoặc TÌM KIẾM:",
+    "1. Vui lòng CHỌN SẢN PHẨM TRONG CỬA HÀNG CHÚNG TÔI NHÉ:",
     options=product_options,
     index=0 # Chọn sản phẩm đầu tiên làm mặc định
 )
