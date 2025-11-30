@@ -107,16 +107,16 @@ def get_item_recommendations(product_index, top_k, threshold):
 # --------------------------------------------------------------------------------------
 # 4) Streamlit UI & Logic
 # --------------------------------------------------------------------------------------
-st.title("Chào mừng đến với cửa hàng của chúng tôi! 🛍️")
-st.markdown("Chọn sản phẩm chính xác để xem gợi ý Item-to-Item (tương tự như trong Colab).")
+st.title("Chào mừng đến với cửa hàng của chúng tôi!")
+st.markdown("Chọn/Nhập sản phẩm bạn cần tìm")
 
 if df.empty or vectorizer is None:
     st.stop() 
 
-# SỬ DỤNG SELECTBOX ĐỂ CHỌN CHÍNH XÁC SẢN PHẨM NHƯ EVALUATION TRONG COLAB
+
 product_options = df["Tên sản phẩm"].unique()
 selected_product_name = st.selectbox(
-    "1. Vui lòng CHỌN SẢN PHẨM để nhận gợi ý:",
+    "1. Vui lòng CHỌN SẢN PHẨM hoặc TÌM KIẾMKIẾM:",
     options=product_options,
     index=0 # Chọn sản phẩm đầu tiên làm mặc định
 )
@@ -144,7 +144,7 @@ with col_t:
 if selected_product_name:
     
     # --- B. HIỂN THỊ SẢN PHẨM CHÍNH ---
-    st.subheader(f"✨ Sản phẩm Chính: {df.loc[best_idx, 'Tên sản phẩm']}")
+    st.subheader(f"Sản phẩm Chính: {df.loc[best_idx, 'Tên sản phẩm']}")
     
     col_img, col_info = st.columns([1, 3])
     
