@@ -7,7 +7,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 # 1) Load & preprocess data
 # -------------------------
 @st.cache_data
-def load_data(csv_path="group6.csv"):
+def load_data(csv_path="Gr6.csv"):
     df = pd.read_csv(csv_path)
 
     # Clean Keywords column
