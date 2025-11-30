@@ -72,7 +72,7 @@ if user_query:
 
         st.subheader("Maybe you also like this product:")
 
-        for idx in ranking[1:6]:
+        for idx in ranking[1:31]:
             if scores[idx] < threshold:
                 break
 
