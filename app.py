@@ -108,7 +108,7 @@ def get_item_recommendations(product_index, top_k, threshold):
 # 4) Streamlit UI & Logic
 # --------------------------------------------------------------------------------------
 st.title("Chào mừng đến với cửa hàng của chúng tôi!")
-st.markdown("Chọn/Nhập sản phẩm bạn cần tìm")
+st.markdown("Chúng tôi bán sản phẩm về Adidas, Lacoste, Gucci,Nike và Puma. Hãy trải nghiệm mua sắm cùng những sản phẩm siu rẻ (hoặc ko):3")
 
 if df.empty or vectorizer is None:
     st.stop() 
