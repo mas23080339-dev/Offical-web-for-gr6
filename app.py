@@ -6,7 +6,7 @@ import numpy as np
 
 # Cấu hình trang Streamlit
 st.set_page_config(
-    page_title="Demo CBF for small business",
+    page_title="Demo CBF Hybrid",
     layout="wide"
 )
 
@@ -25,8 +25,7 @@ def load_data(csv_path="Gr6.csv"):
     # Làm sạch cột Từ khóa và Mô tả
     df["Từ khóa"] = df["Từ khóa"].fillna("").astype(str).str.replace(";", " ")
     df["Mô tả"] = df["Mô tả"].fillna("").astype(str)
-    # Loại bỏ khoảng trắng thừa ở tên sản phẩm
-    df["Tên sản phẩm"] = df["Tên sản phẩm"].fillna("").astype(str).str.strip() 
+    df["Tên sản phẩm"] = df["Tên sản phẩm"].fillna("").astype(str).str.strip()
 
     # Gộp tất cả các trường văn bản lại để tính TF-IDF
     df["FullText"] = (
@@ -57,7 +56,6 @@ def build_similarity_matrices(df):
     tfidf_matrix = vectorizer.fit_transform(df["FullText"])
     
     # Ma trận Tương đồng giữa các Sản phẩm (Item-to-Item Similarity Matrix)
-    # Đây là mấu chốt để mô hình hoạt động giống như hàm evaluate_verbose trong Colab
     item_similarity_matrix = cosine_similarity(tfidf_matrix) 
     
     return vectorizer, item_similarity_matrix
@@ -68,7 +66,7 @@ else:
     vectorizer, item_similarity_matrix = None, None
     
 # --------------------------------------------------------------------------------------
-# 3) Hàm Gợi ý Sản phẩm Tương tự
+# 3) Hàm Gợi ý Sản phẩm Tương tự (Sử dụng Item-to-Item Matrix)
 # --------------------------------------------------------------------------------------
 def get_item_recommendations(product_index, top_k, threshold):
     """
@@ -103,48 +101,82 @@ def get_item_recommendations(product_index, top_k, threshold):
         
     return recommendations
 
-
 # --------------------------------------------------------------------------------------
 # 4) Streamlit UI & Logic
 # --------------------------------------------------------------------------------------
-st.title("Chào mừng đến với cửa hàng của chúng tôi!")
-st.markdown("Chúng tôi bán sản phẩm về Adidas, Lacoste, Gucci,Nike và Puma. Hãy trải nghiệm mua sắm cùng những sản phẩm siu rẻ (hoặc ko):3")
+
+st.title("Chào mừng đến với cửa hàng của chúng tôi! 🛍️")
+st.markdown("Hệ thống Gợi ý lai (Hybrid Recommender) - Kết hợp Tìm kiếm và Gợi ý Tương tự.")
 
 if df.empty or vectorizer is None:
     st.stop() 
 
+# Khối điều khiển chung
+with st.sidebar:
+    st.header("Thiết lập Gợi ý")
+    top_k = st.number_input("Số lượng gợi ý (Top K):", min_value=1, max_value=20, value=5)
+    threshold = st.slider("Ngưỡng tương đồng tối thiểu:", min_value=0.0, max_value=1.0, value=0.1, step=0.05)
 
-product_options = df["Tên sản phẩm"].unique()
-selected_product_name = st.selectbox(
-    "1. Vui lòng CHỌN SẢN PHẨM TRONG CỬA HÀNG CHÚNG TÔI NHÉ:",
-    options=product_options,
-    index=0 # Chọn sản phẩm đầu tiên làm mặc định
+# --- CHỌN CHẾ ĐỘ HOẠT ĐỘNG ---
+mode = st.radio(
+    "Vui lòng chọn chế độ hoạt động:",
+    ("1. Tìm kiếm bằng Từ khóa (Search Mode)", "2. Chọn Sản phẩm Chính xác (Evaluation Mode)"),
+    horizontal=True,
+    index=0 # Mặc định là chế độ tìm kiếm
 )
 
-# Lấy chỉ mục (index) của sản phẩm được chọn
-try:
-    # Lấy chỉ mục đầu tiên khớp với tên sản phẩm
-    best_idx = df[df["Tên sản phẩm"] == selected_product_name].index[0] 
-except IndexError:
-    st.error("Lỗi: Không tìm thấy sản phẩm này trong dữ liệu. Vui lòng chọn sản phẩm khác.")
-    st.stop()
-
-# Độ tương đồng của sản phẩm với chính nó (luôn là 1.0)
-best_score = 1.0 
+# Khởi tạo biến
+best_idx = None
+best_score = 0.0
+is_accurate_mode = False
 
 st.markdown("---")
 
-col_k, col_t = st.columns(2)
-with col_k:
-    top_k = st.number_input("2. Số lượng gợi ý (Top K):", min_value=1, max_value=20, value=5)
-with col_t:
-    threshold = st.slider("3. Ngưỡng tương đồng tối thiểu:", min_value=0.0, max_value=1.0, value=0.1, step=0.05)
-
-
-if selected_product_name:
+if mode == "1. Tìm kiếm bằng Từ khóa (Search Mode)":
+    # --- CHẾ ĐỘ 1: TÌM SẢN PHẨM BẰNG QUERY ---
+    user_query = st.text_input(
+        "Nhập từ khóa hoặc mô tả sản phẩm (ví dụ: Áo thun co giãn, ba lô chống nước):",
+        key="query_input"
+    )
     
-    # --- B. HIỂN THỊ SẢN PHẨM CHÍNH ---
-    st.subheader(f"Sản phẩm Chính: {df.loc[best_idx, 'Tên sản phẩm']}")
+    if user_query:
+        # Tính toán độ tương đồng giữa Query và TẤT CẢ sản phẩm
+        query_vec = vectorizer.transform([user_query])
+        query_scores = cosine_similarity(query_vec, vectorizer.transform(df["FullText"]))[0]
+        ranking_by_query = query_scores.argsort()[::-1]
+        
+        best_idx = ranking_by_query[0]
+        best_score = query_scores[best_idx]
+        
+        if best_score < threshold:
+            st.warning("Không tìm thấy sản phẩm nào đủ tương đồng với từ khóa của bạn. Vui lòng thử lại.")
+            best_idx = None # Reset nếu không tìm thấy
+        else:
+            st.info(f"Đã tìm thấy sản phẩm chính: {df.loc[best_idx, 'Tên sản phẩm']} (Tương đồng Query: {best_score:.3f})")
+
+elif mode == "2. Chọn Sản phẩm Chính xác (Evaluation Mode)":
+    # --- CHẾ ĐỘ 2: CHỌN SẢN PHẨM TỪ DANH SÁCH ---
+    product_options = df["Tên sản phẩm"].unique()
+    selected_product_name = st.selectbox(
+        "Chọn TÊN SẢN PHẨM chính xác để xem gợi ý:",
+        options=product_options,
+        key="selectbox_input"
+    )
+
+    if selected_product_name:
+        is_accurate_mode = True
+        try:
+            best_idx = df[df["Tên sản phẩm"] == selected_product_name].index[0] 
+            best_score = 1.0 # Độ tương đồng của sản phẩm với chính nó là 1.0
+        except IndexError:
+            st.error("Lỗi: Không tìm thấy sản phẩm này trong dữ liệu.")
+
+
+# --- HIỂN THỊ KẾT QUẢ ---
+
+if best_idx is not None:
+    # --- B. HIỂN THỊ SẢN PHẨM CHÍNH (ĐẦU VÀO CỦA MÔ HÌNH GỢI Ý) ---
+    st.subheader(f"✨ Sản phẩm Chính ({'Đầu vào Gợi ý' if is_accurate_mode else 'Kết quả Tìm kiếm'}): {df.loc[best_idx, 'Tên sản phẩm']}")
     
     col_img, col_info = st.columns([1, 3])
     
@@ -160,13 +192,16 @@ if selected_product_name:
         st.markdown(f"**Mô tả:** {df.loc[best_idx, 'Mô tả']}")
         st.write(f"**Thương hiệu:** `{df.loc[best_idx, 'Thương hiệu']}`")
         st.markdown(f"**Giá:** `{df.loc[best_idx, 'Giá']}` | **Đánh giá:** `{df.loc[best_idx, 'Điểm đánh giá']}`")
-        # Hiển thị điểm tương đồng là 1.0 vì đây là sản phẩm chính
-        st.success(f"**Điểm Tương đồng (Item-to-Item Basis):** `{best_score:.3f}`") 
+        
+        if is_accurate_mode:
+            st.success(f"**Chế độ Evaluation:** Gợi ý dựa trên sản phẩm này.")
+        else:
+            st.success(f"**Độ tương đồng với Query:** `{best_score:.3f}`")
         
     st.markdown("---")
     
     # --- C. GỢI Ý SẢN PHẨM TƯƠNG TỰ (ITEM-TO-ITEM) ---
-    st.subheader("Bạn cũng có thể thích (Gợi ý dựa trên Sản phẩm Chính):")
+    st.subheader("💡 Sản phẩm Tương tự (Item-to-Item Recommendation):")
 
     recommendations = get_item_recommendations(best_idx, top_k, threshold)
     
@@ -185,7 +220,7 @@ if selected_product_name:
                     st.image(image_url, width=120)
                 else:
                     # Thẻ thay thế nếu không có ảnh
-                    st.markdown(f"<div style='height:120px; background-color:#333; color:white; padding:10px; border-radius: 5px; display:flex; align-items:center; justify-content:center; text-align:center;'>Ảnh đang cập nhật</div>", unsafe_allow_html=True)
+                    st.markdown(f"<div style='height:120px; background-color:#333; color:white; padding:10px; border-radius: 5px; display:flex; align-items:center; justify-content:center; text-align:center; font-size:12px;'>Ảnh đang cập nhật</div>", unsafe_allow_html=True)
                     
 
                 # Hiển thị thông tin
@@ -199,4 +234,4 @@ if selected_product_name:
                 st.caption(f"Giá: {df.loc[idx, 'Giá']}")
                 st.info(f"Tương đồng: `{rec['similarity']:.3f}`")
     else:
-        st.warning(f"Không tìm thấy sản phẩm tương tự nào có độ tương đồng lớn hơn {threshold:.2f} với '{selected_product_name}'.")
+        st.warning(f"Không tìm thấy sản phẩm tương tự nào có độ tương đồng lớn hơn {threshold:.2f}.")
