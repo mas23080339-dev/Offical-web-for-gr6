@@ -106,21 +106,21 @@ def get_item_recommendations(product_index, top_k, threshold):
 # --------------------------------------------------------------------------------------
 
 st.title("Chào mừng đến với cửa hàng của chúng tôi!")
-st.markdown("Các sản phẩm của Adidas, Lacoste, Gucci, Nike, Puma chúng tôi đều có, rất đa dạng, nhiều mẫu cho bạn lựa chọn:).")
+st.markdown("Hãy tìm kiếm sản phẩm của bạn!!.")
 
 if df.empty or vectorizer is None:
     st.stop() 
 
 # Khối điều khiển chung
 with st.sidebar:
-    st.header("Thiết lập gợi ý")
+    st.header("Thiết lập Gợi ý")
     top_k = st.number_input("Số lượng gợi ý (Top K):", min_value=1, max_value=20, value=5)
     threshold = st.slider("Ngưỡng tương đồng tối thiểu:", min_value=0.0, max_value=1.0, value=0.1, step=0.05)
 
 # --- CHỌN CHẾ ĐỘ HOẠT ĐỘNG ---
 mode = st.radio(
     "Vui lòng chọn chế độ hoạt động:",
-    ("1. Tìm kiếm bằng Từ khóa (Searching by user)", "2. Chọn Sản phẩm Chính xác (Searching by our availableavailable products)"),
+    ("1. Tìm kiếm bằng Từ khóa (Search Mode)", "2. Chọn Sản phẩm Chính xác (Evaluation Mode)"),
     horizontal=True,
     index=0 # Mặc định là chế độ tìm kiếm
 )
@@ -135,7 +135,7 @@ st.markdown("---")
 if mode == "1. Tìm kiếm bằng Từ khóa (Search Mode)":
     # --- CHẾ ĐỘ 1: TÌM SẢN PHẨM BẰNG QUERY ---
     user_query = st.text_input(
-        "Nhập từ khóa hoặc mô tả sản phẩm (ví dụ: Áo thun co giãn, ba lô chống nước,...):",
+        "Nhập từ khóa hoặc mô tả sản phẩm (ví dụ: Áo thun co giãn, ba lô chống nước):",
         key="query_input"
     )
     
@@ -176,7 +176,7 @@ elif mode == "2. Chọn Sản phẩm Chính xác (Evaluation Mode)":
 
 if best_idx is not None:
     # --- B. HIỂN THỊ SẢN PHẨM CHÍNH (ĐẦU VÀO CỦA MÔ HÌNH GỢI Ý) ---
-    st.subheader(f"Sản phẩm Của chúng tôi ({'Đầu vào Gợi ý' if is_accurate_mode else 'Kết quả Tìm kiếm'}): {df.loc[best_idx, 'Tên sản phẩm']}")
+    st.subheader(f"Sản phẩm Chính ({'Đầu vào Gợi ý' if is_accurate_mode else 'Kết quả Tìm kiếm'}): {df.loc[best_idx, 'Tên sản phẩm']}")
     
     col_img, col_info = st.columns([1, 3])
     
