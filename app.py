@@ -2,32 +2,32 @@ import streamlit as st
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-import numpy as np
+import re
 
-# Cấu hình trang Streamlit
+# ------------------------------------------
+# 1) Cấu hình Streamlit
+# ------------------------------------------
 st.set_page_config(
     page_title="Demo CBF Hybrid",
     layout="wide"
 )
+st.title("Chào mừng đến với cửa hàng của chúng tôi!")
+st.markdown("Hãy tìm kiếm sản phẩm hoặc chọn sản phẩm chính xác để nhận gợi ý!")
 
-# --------------------------------------------------------------------------------------
-# 1) Tải & Tiền xử lý Dữ liệu
-# --------------------------------------------------------------------------------------
+# ------------------------------------------
+# 2) Load dữ liệu
+# ------------------------------------------
 @st.cache_data
 def load_data(csv_path="Gr6.csv"):
-    """Tải dữ liệu từ CSV và tiền xử lý."""
-    try:
-        df = pd.read_csv(csv_path)
-    except FileNotFoundError:
-        st.error(f"Lỗi: Không tìm thấy file dữ liệu tại đường dẫn '{csv_path}'. Vui lòng kiểm tra lại.")
-        return pd.DataFrame() 
+    """Tải dữ liệu và tiền xử lý cơ bản."""
+    df = pd.read_csv(csv_path)
 
-    # Làm sạch cột Từ khóa và Mô tả
+    # Làm sạch cột
     df["Từ khóa"] = df["Từ khóa"].fillna("").astype(str).str.replace(";", " ")
     df["Mô tả"] = df["Mô tả"].fillna("").astype(str)
     df["Tên sản phẩm"] = df["Tên sản phẩm"].fillna("").astype(str).str.strip()
 
-    # Gộp tất cả các trường văn bản lại để tính TF-IDF
+    # Gộp tất cả trường text để TF-IDF
     df["FullText"] = (
         df["Tên sản phẩm"] + " " +
         df["Mô tả"] + " " +
@@ -42,196 +42,158 @@ def load_data(csv_path="Gr6.csv"):
     return df
 
 df = load_data()
+if df.empty:
+    st.error("Dữ liệu rỗng hoặc lỗi tải file CSV. Kiểm tra lại đường dẫn.")
+    st.stop()
 
-# --------------------------------------------------------------------------------------
-# 2) Tính toán TF-IDF và Ma trận Tương đồng giữa các Sản phẩm (Item-to-Item)
-# --------------------------------------------------------------------------------------
+# ------------------------------------------
+# 3) Xây dựng TF-IDF vectorizer
+# ------------------------------------------
 @st.cache_data
-def build_similarity_matrices(df):
-    """Tính TF-IDF và ma trận tương đồng giữa các sản phẩm."""
-    if df.empty:
-        return None, None
-        
+def build_vectorizer(df):
     vectorizer = TfidfVectorizer()
     tfidf_matrix = vectorizer.fit_transform(df["FullText"])
-    
-    # Ma trận Tương đồng giữa các Sản phẩm (Item-to-Item Similarity Matrix)
-    item_similarity_matrix = cosine_similarity(tfidf_matrix) 
-    
-    return vectorizer, item_similarity_matrix
+    return vectorizer, tfidf_matrix
 
-if not df.empty:
-    vectorizer, item_similarity_matrix = build_similarity_matrices(df)
-else:
-    vectorizer, item_similarity_matrix = None, None
-    
-# --------------------------------------------------------------------------------------
-# 3) Hàm Gợi ý Sản phẩm Tương tự (Sử dụng Item-to-Item Matrix)
-# --------------------------------------------------------------------------------------
-def get_item_recommendations(product_index, top_k, threshold):
+vectorizer, tfidf_matrix = build_vectorizer(df)
+
+# ------------------------------------------
+# 4) Hàm recommend giống Colab
+# ------------------------------------------
+def get_recommendations_by_query(query_vec, df, vectorizer, top_k=5, threshold=0.1):
     """
-    Tìm các sản phẩm tương tự dựa trên Item-to-Item Similarity Matrix.
+    Gợi ý sản phẩm dựa trên TF-IDF và Cosine Similarity giống Colab.
     """
-    if item_similarity_matrix is None:
-        return []
-        
-    # Lấy hàng tương đồng của sản phẩm chính
-    item_scores = item_similarity_matrix[product_index]
-    
-    # Sắp xếp chỉ mục theo điểm số giảm dần
-    ranking = item_scores.argsort()[::-1]
-    
+    tfidf_all = vectorizer.transform(df["FullText"])
+    scores = cosine_similarity(query_vec, tfidf_all)[0]
+    ranking = scores.argsort()[::-1]
+
     recommendations = []
     count = 0
-    # Bỏ qua sản phẩm đầu tiên (chính nó) -> bắt đầu từ ranking[1:]
-    for idx in ranking[1:]:
-        score = item_scores[idx]
-        
-        # Dừng lại nếu điểm số dưới ngưỡng hoặc đã đủ K sản phẩm
+    for idx in ranking:
+        score = scores[idx]
         if score < threshold or count >= top_k:
             break
-            
-        # Thêm sản phẩm được gợi ý vào danh sách
         recommendations.append({
             "index": idx,
             "similarity": score,
             "data": df.loc[idx]
         })
         count += 1
-        
+
     return recommendations
 
-# --------------------------------------------------------------------------------------
-# 4) Streamlit UI & Logic
-# --------------------------------------------------------------------------------------
-
-st.title("Chào mừng đến với cửa hàng của chúng tôi!")
-st.markdown("Hãy tìm kiếm sản phẩm của bạn!!.")
-
-if df.empty or vectorizer is None:
-    st.stop() 
-
-# Khối điều khiển chung
+# ------------------------------------------
+# 5) Sidebar: Thiết lập Top-K và Threshold
+# ------------------------------------------
 with st.sidebar:
-    st.header("Thiết lập Gợi ý")
+    st.header("Thiết lập gợi ý")
     top_k = st.number_input("Số lượng gợi ý (Top K):", min_value=1, max_value=20, value=5)
-    threshold = st.slider("Ngưỡng tương đồng tối thiểu:", min_value=0.0, max_value=1.0, value=0.1, step=0.05)
+    threshold = st.slider("Ngưỡng tương đồng tối thiểu:", 0.0, 1.0, 0.1, 0.05)
 
-# --- CHỌN CHẾ ĐỘ HOẠT ĐỘNG ---
+# ------------------------------------------
+# 6) Chọn chế độ hoạt động
+# ------------------------------------------
 mode = st.radio(
-    "Vui lòng chọn chế độ hoạt động:",
-    ("1. Tìm kiếm bằng Từ khóa (Search Mode)", "2. Chọn Sản phẩm Chính xác (Evaluation Mode)"),
-    horizontal=True,
-    index=0 # Mặc định là chế độ tìm kiếm
+    "Chọn chế độ hoạt động:",
+    ("1. Tìm kiếm bằng từ khóa", "2. Chọn sản phẩm chính xác (Evaluation Mode)"),
+    horizontal=True
 )
 
-# Khởi tạo biến
 best_idx = None
 best_score = 0.0
 is_accurate_mode = False
 
 st.markdown("---")
 
-if mode == "1. Tìm kiếm bằng Từ khóa (Search Mode)":
-    # --- CHẾ ĐỘ 1: TÌM SẢN PHẨM BẰNG QUERY ---
+# ------------------------------------------
+# 7) Search Mode
+# ------------------------------------------
+if mode == "1. Tìm kiếm bằng từ khóa":
     user_query = st.text_input(
-        "Nhập từ khóa hoặc mô tả sản phẩm (ví dụ: Áo thun co giãn, ba lô chống nước):",
+        "Nhập từ khóa hoặc mô tả sản phẩm:",
         key="query_input"
     )
-    
     if user_query:
-        # Tính toán độ tương đồng giữa Query và TẤT CẢ sản phẩm
         query_vec = vectorizer.transform([user_query])
-        query_scores = cosine_similarity(query_vec, vectorizer.transform(df["FullText"]))[0]
-        ranking_by_query = query_scores.argsort()[::-1]
-        
-        best_idx = ranking_by_query[0]
-        best_score = query_scores[best_idx]
-        
-        if best_score < threshold:
-            st.warning("Không tìm thấy sản phẩm nào đủ tương đồng với từ khóa của bạn. Vui lòng thử lại.")
-            best_idx = None # Reset nếu không tìm thấy
+        recommendations = get_recommendations_by_query(
+            query_vec, df, vectorizer, top_k=top_k, threshold=threshold
+        )
+        if len(recommendations) == 0:
+            st.warning("Không tìm thấy sản phẩm nào đủ tương đồng.")
+            best_idx = None
         else:
-            st.info(f"Đã tìm thấy sản phẩm chính: {df.loc[best_idx, 'Tên sản phẩm']} (Tương đồng Query: {best_score:.3f})")
+            best_idx = recommendations[0]["index"]
+            best_score = recommendations[0]["similarity"]
+            st.info(f"Đã tìm thấy sản phẩm chính: {df.loc[best_idx, 'Tên sản phẩm']} (Score: {best_score:.3f})")
 
-elif mode == "2. Chọn Sản phẩm Chính xác (Evaluation Mode)":
-    # --- CHẾ ĐỘ 2: CHỌN SẢN PHẨM TỪ DANH SÁCH ---
+# ------------------------------------------
+# 8) Evaluation Mode (chọn sản phẩm)
+# ------------------------------------------
+elif mode == "2. Chọn sản phẩm chính xác (Evaluation Mode)":
     product_options = df["Tên sản phẩm"].unique()
     selected_product_name = st.selectbox(
-        "Chọn TÊN SẢN PHẨM chính xác để xem gợi ý:",
-        options=product_options,
-        key="selectbox_input"
+        "Chọn sản phẩm chính xác:",
+        options=product_options
     )
-
     if selected_product_name:
         is_accurate_mode = True
-        try:
-            best_idx = df[df["Tên sản phẩm"] == selected_product_name].index[0] 
-            best_score = 1.0 # Độ tương đồng của sản phẩm với chính nó là 1.0
-        except IndexError:
-            st.error("Lỗi: Không tìm thấy sản phẩm này trong dữ liệu.")
+        best_idx = df[df["Tên sản phẩm"] == selected_product_name].index[0]
+        best_score = 1.0  # tự mình
+        # Lấy vector TF-IDF của sản phẩm
+        product_vec = vectorizer.transform([df.loc[best_idx, "FullText"]])
+        # Recommend Top-K bỏ chính nó
+        recommendations = get_recommendations_by_query(
+            product_vec, df, vectorizer, top_k=top_k+1, threshold=threshold
+        )[1:]
 
-
-# --- HIỂN THỊ KẾT QUẢ ---
-
+# ------------------------------------------
+# 9) Hiển thị sản phẩm chính và gợi ý
+# ------------------------------------------
 if best_idx is not None:
-    # --- B. HIỂN THỊ SẢN PHẨM CHÍNH (ĐẦU VÀO CỦA MÔ HÌNH GỢI Ý) ---
-    st.subheader(f"Sản phẩm Chính ({'Đầu vào Gợi ý' if is_accurate_mode else 'Kết quả Tìm kiếm'}): {df.loc[best_idx, 'Tên sản phẩm']}")
-    
+    st.subheader(f"Sản phẩm chính: {df.loc[best_idx, 'Tên sản phẩm']}")
+
     col_img, col_info = st.columns([1, 3])
-    
     with col_img:
-        image_url = df.loc[best_idx, "Link ảnh"] if "Link ảnh" in df.columns else None
+        image_url = df.loc[best_idx]["Link ảnh"] if "Link ảnh" in df.columns else None
         if image_url and image_url.strip():
-            st.image(image_url, width=200, caption=df.loc[best_idx, 'Tên sản phẩm'])
+            st.image(image_url, width=200)
         else:
             st.info("Không có hình ảnh.")
 
     with col_info:
         st.markdown(f"**Tên:** `{df.loc[best_idx, 'Tên sản phẩm']}`")
         st.markdown(f"**Mô tả:** {df.loc[best_idx, 'Mô tả']}")
-        st.write(f"**Thương hiệu:** `{df.loc[best_idx, 'Thương hiệu']}`")
+        st.markdown(f"**Thương hiệu:** `{df.loc[best_idx, 'Thương hiệu']}`")
         st.markdown(f"**Giá:** `{df.loc[best_idx, 'Giá']}` | **Đánh giá:** `{df.loc[best_idx, 'Điểm đánh giá']}`")
-        
         if is_accurate_mode:
-            st.success(f"**Chế độ Evaluation:** Gợi ý dựa trên sản phẩm này.")
+            st.success("Chế độ Evaluation: Gợi ý dựa trên sản phẩm này.")
         else:
-            st.success(f"**Độ tương đồng với Query:** `{best_score:.3f}`")
-        
+            st.success(f"Độ tương đồng với Query: `{best_score:.3f}`")
+
     st.markdown("---")
-    
-    # --- C. GỢI Ý SẢN PHẨM TƯƠNG TỰ (ITEM-TO-ITEM) ---
-    st.subheader("Có thể bạn thích sản phẩm này:")
+    st.subheader("Bạn có thể thích sản phẩm này:")
 
-    recommendations = get_item_recommendations(best_idx, top_k, threshold)
-    
     if recommendations:
-        
-        # Sử dụng st.columns để hiển thị gọn gàng hơn
-        rec_cols = st.columns(min(len(recommendations), 4)) 
-
+        rec_cols = st.columns(min(len(recommendations), 4))
         for i, rec in enumerate(recommendations):
             idx = rec["index"]
-            
             with rec_cols[i % len(rec_cols)]:
-                # Hiển thị ảnh
-                image_url = df.loc[idx, "Link ảnh"] if "Link ảnh" in df.columns else None
+                image_url = df.loc[idx]["Link ảnh"] if "Link ảnh" in df.columns else None
                 if image_url and image_url.strip():
                     st.image(image_url, width=120)
                 else:
-                    # Thẻ thay thế nếu không có ảnh
-                    st.markdown(f"<div style='height:120px; background-color:#333; color:white; padding:10px; border-radius: 5px; display:flex; align-items:center; justify-content:center; text-align:center; font-size:12px;'>Ảnh đang cập nhật</div>", unsafe_allow_html=True)
-                    
+                    st.markdown(
+                        "<div style='height:120px; background-color:#333; color:white; padding:10px; "
+                        "border-radius: 5px; display:flex; align-items:center; justify-content:center; "
+                        "text-align:center; font-size:12px;'>Ảnh đang cập nhật</div>",
+                        unsafe_allow_html=True
+                    )
 
-                # Hiển thị thông tin
                 st.markdown(f"**{df.loc[idx, 'Tên sản phẩm']}**")
-                
-                # PHẦN MÔ TẢ TÓM TẮT (100 ký tự đầu tiên)
-                description = df.loc[idx, "Mô tả"]
-                st.caption(f"{description[:100]}...")
-                
+                st.caption(f"{df.loc[idx, 'Mô tả'][:100]}...")
                 st.caption(f"Thương hiệu: {df.loc[idx, 'Thương hiệu']}")
                 st.caption(f"Giá: {df.loc[idx, 'Giá']}")
                 st.info(f"Tương đồng: `{rec['similarity']:.3f}`")
     else:
-        st.warning(f"Không tìm thấy sản phẩm tương tự nào có độ tương đồng lớn hơn {threshold:.2f}.")
+        st.warning(f"Không tìm thấy sản phẩm tương tự nào với ngưỡng {threshold:.2f}.")
