@@ -5,106 +5,116 @@ import re
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
+# ==========================================================================================
+# CONFIG
+# ==========================================================================================
+st.set_page_config(page_title="Demo CBF Hybrid", layout="wide")
 
-# ===========================
-# 1. LOAD DATA
-# ===========================
+# ==========================================================================================
+# LOAD DATA
+# ==========================================================================================
 @st.cache_data
 def load_data():
-    df = pd.read_csv("Gr6.csv")
+    df = pd.read_excel("Database-group2-1.xlsx")
 
-    # Clean essential columns
-    df["Tên sản phẩm"] = df["Tên sản phẩm"].astype(str).str.strip()
-    df["Mô tả"] = df["Mô tả"].astype(str).fillna("")
-    df["Thương hiệu"] = df["Thương hiệu"].astype(str).fillna("")
-    df["Từ khóa"] = df["Từ khóa"].astype(str).fillna("")
-    df["Loại sản phẩm"] = df["Loại sản phẩm"].astype(str).str.strip()
+    # Chuẩn hóa text tránh lỗi TF-IDF
+    df["Tên sản phẩm"] = df["Tên sản phẩm"].fillna("").astype(str)
+    df["Mô tả"] = df["Mô tả"].fillna("").astype(str)
+    df["Loại sản phẩm"] = df["Loại sản phẩm"].fillna("").astype(str)
 
-    # Create combined text for TF-IDF
-    df["combined_text"] = (
-        df["Tên sản phẩm"] + " " +
-        df["Mô tả"] + " " +
-        df["Thương hiệu"] + " " +
-        df["Từ khóa"]
-    ).str.lower()
-
+    # Cột text final để TF-IDF
+    df["text_clean"] = df["Tên sản phẩm"] + " " + df["Mô tả"]
     return df
-
 
 df = load_data()
 
-# Build TF-IDF model
-vectorizer = TfidfVectorizer(stop_words="english")
-tfidf_matrix = vectorizer.fit_transform(df["combined_text"])
+# ==========================================================================================
+# TF-IDF MODEL
+# ==========================================================================================
+@st.cache_resource
+def build_tfidf_model(texts):
+    vect = TfidfVectorizer(stop_words="english")
+    mat = vect.fit_transform(texts)
+    return vect, mat
 
+vectorizer, tfidf_matrix = build_tfidf_model(df["text_clean"])
 
-# ===========================
-# 2. FIND BEST PRODUCT MATCH
-# ===========================
-def find_best_match(query):
-    query_clean = re.sub(r"[^\w\s]", " ", query.lower())
-    vec = vectorizer.transform([query_clean])
-    scores = cosine_similarity(vec, tfidf_matrix).flatten()
+# ==========================================================================================
+# UTILS — QUERY PROCESSING
+# ==========================================================================================
+def process_query(q: str):
+    q = q.lower()
+    q = re.sub(r"[^\w\s]", " ", q)
+    q = re.sub(r"\s+", " ", q).strip()
+    return q
 
-    best_idx = scores.argmax()
-    best_score = scores[best_idx]
-    return best_idx, best_score
+# ==========================================================================================
+# STEP 1 — TÌM SẢN PHẨM GẦN NHẤT VỚI QUERY
+# ==========================================================================================
+def search_best_match(query):
+    processed = process_query(query)
+    q_vec = vectorizer.transform([processed])
+    sims = cosine_similarity(q_vec, tfidf_matrix).flatten()
 
+    best_idx = sims.argmax()
+    best_score = sims[best_idx]
+    return best_idx, best_score, sims
 
-# ===========================
-# 3. RECOMMEND SAME CATEGORY ONLY
-# ===========================
-def recommend_same_category(idx, top_k=10):
+# ==========================================================================================
+# STEP 2 — LỌC THEO LOẠI SẢN PHẨM
+# ==========================================================================================
+def filter_same_category(idx, sims, top_k=10, threshold=0.15):
     target_cat = df.loc[idx, "Loại sản phẩm"]
 
-    # All products in the same category
-    same_cat_df = df[df["Loại sản phẩm"] == target_cat]
+    df["sim"] = sims
+    df_sorted = df[df["sim"] >= threshold].sort_values("sim", ascending=False)
 
-    same_cat_indices = same_cat_df.index.tolist()
+    # LỌC CÙNG CATEGORY
+    same_cat = df_sorted[df_sorted["Loại sản phẩm"] == target_cat]
 
-    sims = cosine_similarity(tfidf_matrix[idx], tfidf_matrix).flatten()
+    # Nếu đủ top K → dùng luôn
+    if len(same_cat) >= top_k + 1:
+        return same_cat.iloc[1:top_k+1]  # bỏ sản phẩm chính
 
-    # Filter same category + exclude itself
-    filtered = [(i, sims[i]) for i in same_cat_indices if i != idx]
+    # Nếu không đủ → fallback: lấy thêm sản phẩm khác loại
+    fallback = df_sorted.iloc[1:top_k+1]
 
-    # Sort by similarity
-    filtered_sorted = sorted(filtered, key=lambda x: x[1], reverse=True)
+    return fallback
 
-    # Get top-k indices
-    top_indices = [i for i, s in filtered_sorted[:top_k]]
+# ==========================================================================================
+# STREAMLIT UI
+# ==========================================================================================
+st.title("🔍 Content-Based Filtering Recommendation Demo")
 
-    return top_indices
+query = st.text_input("Enter the product you want to search for:")
 
+top_k = st.slider("Top K", 5, 20, 10)
+threshold = st.slider("Cosine similarity threshold", 0.05, 0.50, 0.15)
 
-# ===========================
-# 4. STREAMLIT UI
-# ===========================
-st.set_page_config(page_title="CBF Product Recommendation", layout="wide")
+# ==========================================================================================
+# PROCESS
+# ==========================================================================================
+if query.strip() != "":
+    best_idx, best_score, sims = search_best_match(query)
 
-st.title("Content-Based Recommendation System")
-st.write("Search products and get recommendations **within the same category only**.")
+    st.subheader("🔎 Most similar product in store:")
+    st.write(f"**Tên sản phẩm:** {df.loc[best_idx, 'Tên sản phẩm']}")
+    st.write(f"**Loại sản phẩm:** {df.loc[best_idx, 'Loại sản phẩm']}")
+    st.write(f"**Mô tả:** {df.loc[best_idx, 'Mô tả']}")
+    st.write(f"**Similarity:** {best_score:.4f}")
 
-query = st.text_input("Enter product name or keywords:")
+    st.divider()
 
-if query:
+    # ======================================================================================
+    # GET RECOMMENDATIONS
+    # ======================================================================================
+    rec_df = filter_same_category(best_idx, sims, top_k, threshold)
 
-    # STEP 1 — Find closest match
-    idx, score = find_best_match(query)
+    st.subheader("🎯 Recommended products")
 
-    st.subheader("Best Matched Product")
-    st.write(df.loc[idx, ["Tên sản phẩm", "Loại sản phẩm", "Giá", "Thương hiệu"]])
-
-    # STEP 2 — Recommend same category only
-    st.subheader("Recommended Products (Same Category)")
-    rec_indices = recommend_same_category(idx, top_k=10)
-
-    if not rec_indices:
-        st.warning("No similar products found in this category.")
-    else:
-        st.dataframe(df.loc[rec_indices, [
-            "Tên sản phẩm",
-            "Loại sản phẩm",
-            "Giá",
-            "Thương hiệu",
-            "Mô tả"
-        ]])
+    for i, row in rec_df.iterrows():
+        with st.container(border=True):
+            st.write(f"### {row['Tên sản phẩm']}")
+            st.write(f"**Loại:** {row['Loại sản phẩm']}")
+            st.write(f"**Score:** {row['sim']:.4f}")
+            st.write(row["Mô tả"])
