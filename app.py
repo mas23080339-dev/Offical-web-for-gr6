@@ -215,4 +215,15 @@ if recs:
                 st.image(img_url, width=120)
             else:
                 st.markdown(
-                    "<div style='height:120px; background-color:#333; color:white; padding:10px; border-radius:5px; display:flex; ali
+                    "<div style='height:120px; background-color:#333; color:white; padding:10px; border-radius:5px; display:flex; align-items:center; justify-content:center; font-size:12px;'>Image missing</div>",
+                    unsafe_allow_html=True
+                )
+
+            st.markdown(f"**{df.loc[idx, 'Tên sản phẩm']}**")
+            st.caption(f"{df.loc[idx, 'Mô tả'][:100]}...")
+            st.caption(f"Brand: {df.loc[idx, 'Thương hiệu']}")
+            st.caption(f"Category: {df.loc[idx, 'Loại sản phẩm']}")
+            st.caption(f"Price: {df.loc[idx, 'Giá']}")
+            st.info(f"Similarity: {rec['similarity']:.3f}")
+else:
+    st.warning("No similar products found above the threshold.")
