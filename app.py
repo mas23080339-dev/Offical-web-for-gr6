@@ -2,206 +2,221 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import re
-
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
-# ------------------------------------------------------
-# 1) STREAMLIT CONFIG
-# ------------------------------------------------------
+# ------------------- NLTK setup -------------------
+import nltk
+try:
+    from nltk.corpus import stopwords
+    en_stopwords = set(stopwords.words('english'))
+except LookupError:
+    # Đảm bảo NLTK được tải xuống nếu chưa có
+    # Trong môi trường Streamlit thực tế, bạn cần đảm bảo nltk.download('stopwords') chạy thành công.
+    try:
+        nltk.download('stopwords')
+        from nltk.corpus import stopwords
+        en_stopwords = set(stopwords.words('english'))
+    except Exception:
+        en_stopwords = set()
+        
+# ------------------- Underthesea setup -------------------
+try:
+    from underthesea import word_tokenize
+    viet_tokenizer = True
+except ImportError:
+    viet_tokenizer = False
+    st.warning("underthesea not installed. Vietnamese tokenization will be skipped.")
+
+# ------------------- Streamlit config -------------------
 st.set_page_config(page_title="Demo CBF Hybrid", layout="wide")
 
-
-# ------------------------------------------------------
-# 2) LOAD DATA
-# ------------------------------------------------------
+# ------------------- 1) Load data -------------------
 @st.cache_data
 def load_data(csv_path="Gr6.csv"):
-    df = pd.read_csv(csv_path)
+    try:
+        df = pd.read_csv(csv_path)
+    except FileNotFoundError:
+        st.error(f"File not found: {csv_path}")
+        return pd.DataFrame()
 
-    # Fill missing
-    df["Tên sản phẩm"] = df["Tên sản phẩm"].fillna("").astype(str).str.strip()
-    df["Mô tả"] = df["Mô tả"].fillna("").astype(str)
+    # Fill missing and clean
     df["Từ khóa"] = df["Từ khóa"].fillna("").astype(str).str.replace(";", " ")
+    df["Mô tả"] = df["Mô tả"].fillna("").astype(str)
+    df["Tên sản phẩm"] = df["Tên sản phẩm"].fillna("").astype(str).str.strip()
     df["Thương hiệu"] = df["Thương hiệu"].fillna("").astype(str)
-    df["Loại sản phẩm"] = df["Loại sản phẩm"].fillna("").astype(str)
+    
+    # NEW: Handle 'Loại sản phẩm' column
+    if "Loại sản phẩm" in df.columns:
+        df["Loại sản phẩm"] = df["Loại sản phẩm"].fillna("").astype(str).str.strip()
+    else:
+        df["Loại sản phẩm"] = "Unknown"
+        st.warning("Column 'Loại sản phẩm' not found. Category filtering will be skipped.")
 
-    if "Link ảnh" not in df.columns:
-        df["Link ảnh"] = ""
+    # Combine text fields
+    df["FullText"] = df["Tên sản phẩm"] + " " + df["Mô tả"] + " " + df["Từ khóa"] + " " + df["Thương hiệu"]
 
-    # Combine text
-    df["FullText"] = (
-        df["Tên sản phẩm"] + " " +
-        df["Mô tả"] + " " +
-        df["Từ khóa"] + " " +
-        df["Thương hiệu"]
-    ).str.lower()
+    if "Link ảnh" in df.columns:
+        df["Link ảnh"] = df["Link ảnh"].fillna("").str.strip()
 
     return df
 
-
 df = load_data()
 if df.empty:
-    st.error("Dataset empty.")
     st.stop()
 
-
-# ------------------------------------------------------
-# 3) TEXT PROCESSING (very stable)
-# ------------------------------------------------------
+# ------------------- 2) Text processing -------------------
 def preprocess_text(text):
     text = text.lower()
     text = re.sub(r'[^\w\s]', ' ', text)
     tokens = text.split()
+
+    # Remove English stopwords
+    tokens = [t for t in tokens if t not in en_stopwords]
+
+    # Vietnamese tokenization
+    if viet_tokenizer:
+        text_vn = " ".join(tokens)
+        tokens = word_tokenize(text_vn, format="text").split()
+
     return tokens
 
-
 def add_bigrams(tokens):
-    bigrams = [tokens[i] + "_" + tokens[i+1] for i in range(len(tokens)-1)]
+    bigrams = [tokens[i]+"_"+tokens[i+1] for i in range(len(tokens)-1)]
     return tokens + bigrams
 
-
 df["tokens"] = df["FullText"].apply(preprocess_text)
-df["tokens_bigram"] = df["tokens"].apply(add_bigrams)
-df["processed_text"] = df["tokens_bigram"].apply(lambda x: " ".join(x))
+df["tokens_with_bigrams"] = df["tokens"].apply(add_bigrams)
+df["processed_text"] = df["tokens_with_bigrams"].apply(lambda x: " ".join(x))
 
-
-# ------------------------------------------------------
-# 4) TF-IDF MATRIX
-# ------------------------------------------------------
+# ------------------- 3) TF-IDF -------------------
 @st.cache_data
-def build_tfidf(texts):
+def build_tfidf_matrix(texts):
     vectorizer = TfidfVectorizer()
-    matrix = vectorizer.fit_transform(texts)
-    return vectorizer, matrix
+    tfidf_matrix = vectorizer.fit_transform(texts)
+    return vectorizer, tfidf_matrix
 
+vectorizer, tfidf_matrix = build_tfidf_matrix(df["processed_text"])
+item_similarity_matrix = cosine_similarity(tfidf_matrix)
 
-vectorizer, tfidf_matrix = build_tfidf(df["processed_text"])
-item_sim = cosine_similarity(tfidf_matrix)
-
-
-# ------------------------------------------------------
-# 5) MAIN FUNCTIONS
-# ------------------------------------------------------
-def find_best_match(query):
-    tokens = preprocess_text(query)
-    tokens = add_bigrams(tokens)
-    txt = " ".join(tokens)
-    vec = vectorizer.transform([txt])
-    scores = cosine_similarity(vec, tfidf_matrix)[0]
-    idx = scores.argmax()
-    return idx, scores[idx]
-
-
-def recommend(idx, topk=5, threshold=0.1):
-    target_cat = df.loc[idx, "Loại sản phẩm"]
-    scores = item_sim[idx]
+# ------------------- 4) Recommendation function -------------------
+# MODIFIED: Thêm logic lọc theo 'Loại sản phẩm'
+def recommend_product_by_index(idx, top_k=5, threshold=0.1):
+    # 1. Lấy Loại sản phẩm của sản phẩm gốc
+    main_product_category = df.loc[idx, "Loại sản phẩm"]
+    
+    scores = item_similarity_matrix[idx]
     sorted_idx = scores.argsort()[::-1]
 
-    recs = []
-    for i in sorted_idx[1:]:
-        if scores[i] < threshold:
-            continue
-        if df.loc[i, "Loại sản phẩm"] != target_cat:
-            continue
-        recs.append((i, scores[i]))
-        if len(recs) >= topk:
+    recommendations = []
+    count = 0
+    for i in sorted_idx[1:]:  # Bỏ qua chính nó
+        # 2. Lọc: Chỉ xem xét các sản phẩm cùng loại
+        if df.loc[i, "Loại sản phẩm"] != main_product_category:
+            continue # Bỏ qua sản phẩm khác loại
+
+        if scores[i] < threshold or count >= top_k:
             break
-    return recs
+        
+        recommendations.append({
+            "index": i,
+            "similarity": scores[i],
+            "data": df.loc[i]
+        })
+        count += 1
+    return recommendations
 
+def find_best_match(query_text):
+    tokens = add_bigrams(preprocess_text(query_text))
+    text_final = " ".join(tokens)
+    vec = vectorizer.transform([text_final])
+    scores = cosine_similarity(vec, tfidf_matrix)[0]
+    best_idx = scores.argmax()
+    best_score = scores[best_idx]
+    return best_idx, best_score
 
-# ------------------------------------------------------
-# 6) STREAMLIT UI
-# ------------------------------------------------------
+# ------------------- 5) Streamlit UI -------------------
 st.title("Demo Content-Based Product Recommendation")
+st.markdown("Search by keyword or choose a product to get recommendations!")
 
+# Sidebar settings
 with st.sidebar:
     st.header("Settings")
-    topk = st.number_input("Top-K", 1, 20, 5)
-    threshold = st.slider("Similarity threshold", 0.0, 1.0, 0.1, 0.05)
+    top_k = st.number_input("Number of recommendations (Top K)", 1, 20, 5)
+    threshold = st.slider("Minimum similarity threshold", 0.0, 1.0, 0.1, 0.05)
 
 mode = st.radio(
     "Choose mode:",
-    ["Search Mode (keyword)", "Evaluation Mode (select product)"],
+    ("Search Mode (keyword)", "Evaluation Mode (select product)"),
     horizontal=True
 )
 
 best_idx = None
 best_score = 0.0
-eval_mode = False
+is_eval_mode = False
 
-
-# ------------------------------------------------------
-# SEARCH MODE
-# ------------------------------------------------------
 if mode == "Search Mode (keyword)":
-    q = st.text_input("Enter product keyword:")
-    if q.strip():
-        best_idx, best_score = find_best_match(q)
+    query_text = st.text_input("Enter product name or description:")
+    if query_text:
+        best_idx, best_score = find_best_match(query_text)
         if best_score < threshold:
-            st.warning("No matching product.")
+            st.warning("No product found matching the query.")
             best_idx = None
         else:
-            st.info(f"Matched: {df.loc[best_idx,'Tên sản phẩm']} ({best_score:.3f})")
+            # Lấy Loại sản phẩm của sản phẩm khớp nhất để in ra
+            category = df.loc[best_idx, 'Loại sản phẩm']
+            st.info(f"Best match: {df.loc[best_idx, 'Tên sản phẩm']} (Loại: {category}, Similarity: {best_score:.3f})")
 
-
-# ------------------------------------------------------
-# EVALUATION MODE
-# ------------------------------------------------------
-else:
-    name = st.selectbox("Choose product:", df["Tên sản phẩm"])
-    if name:
-        eval_mode = True
-        best_idx = df[df["Tên sản phẩm"] == name].index[0]
+elif mode == "Evaluation Mode (select product)":
+    selected_product = st.selectbox("Select product:", df["Tên sản phẩm"].unique())
+    if selected_product:
+        is_eval_mode = True
+        best_idx = df[df["Tên sản phẩm"] == selected_product].index[0]
         best_score = 1.0
 
-
-# ------------------------------------------------------
-# SHOW MAIN PRODUCT
-# ------------------------------------------------------
+# Display main product
 if best_idx is not None:
-    st.subheader("Main Product")
-    col1, col2 = st.columns([1, 3])
-
-    with col1:
-        img = df.loc[best_idx, "Link ảnh"]
-        if img.strip():
-            st.image(img, width=220)
+    st.subheader(f"Main Product: {df.loc[best_idx, 'Tên sản phẩm']}")
+    col_img, col_info = st.columns([1, 3])
+    with col_img:
+        image_url = df.loc[best_idx, "Link ảnh"] if "Link ảnh" in df.columns else None
+        if image_url and image_url.strip():
+            st.image(image_url, width=200)
         else:
-            st.info("No image")
-
-    with col2:
-        st.markdown(f"**Tên:** {df.loc[best_idx,'Tên sản phẩm']}")
-        st.markdown(f"**Mô tả:** {df.loc[best_idx,'Mô tả']}")
-        st.markdown(f"**Thương hiệu:** {df.loc[best_idx,'Thương hiệu']}")
-        st.markdown(f"**Loại:** {df.loc[best_idx,'Loại sản phẩm']}")
-        st.markdown(f"**Giá:** {df.loc[best_idx,'Giá']}")
-        st.markdown(f"**Rating:** {df.loc[best_idx,'Điểm đánh giá']}")
-
-        if eval_mode:
-            st.success("Evaluation Mode")
+            st.info("No image available.")
+    with col_info:
+        st.markdown(f"**Name:** {df.loc[best_idx, 'Tên sản phẩm']}")
+        st.markdown(f"**Loại sản phẩm:** {df.loc[best_idx, 'Loại sản phẩm']}") # NEW: Hiển thị loại sản phẩm
+        st.markdown(f"**Description:** {df.loc[best_idx, 'Mô tả']}")
+        st.markdown(f"**Brand:** {df.loc[best_idx, 'Thương hiệu']}")
+        st.markdown(f"**Price:** {df.loc[best_idx, 'Giá']} | **Rating:** {df.loc[best_idx, 'Điểm đánh giá']}")
+        if is_eval_mode:
+            st.success("Evaluation mode: Recommendations are based on this product.")
         else:
-            st.success(f"Similarity: {best_score:.3f}")
+            st.success(f"Similarity to query: {best_score:.3f}")
 
-
-# ------------------------------------------------------
-# SHOW RECOMMENDATIONS
-# ------------------------------------------------------
+# Display recommendations
 st.subheader("You may also like:")
-
-if best_idx is not None:
-    recs = recommend(best_idx, topk, threshold)
-    if not recs:
-        st.warning("No recommendations found.")
-    else:
-        cols = st.columns(4)
-        for j, (idx, score) in enumerate(recs):
-            with cols[j % 4]:
-                im = df.loc[idx, "Link ảnh"]
-                if im.strip():
-                    st.image(im, width=140)
-                st.markdown(f"**{df.loc[idx,'Tên sản phẩm']}**")
-                st.caption(df.loc[idx, "Mô tả"][:80] + "…")
-                st.caption(f"Brand: {df.loc[idx,'Thương hiệu']}")
-                st.caption(f"Price: {df.loc[idx,'Giá']}")
-                st.info(f"{score:.3f}")
+# The core recommendation function is now category-aware!
+recs = recommend_product_by_index(best_idx, top_k, threshold) 
+if recs:
+    rec_cols = st.columns(min(len(recs), 4))
+    for i, rec in enumerate(recs):
+        idx = rec["index"]
+        with rec_cols[i % len(rec_cols)]:
+            img_url = df.loc[idx, "Link ảnh"] if "Link ảnh" in df.columns else None
+            if img_url and img_url.strip():
+                st.image(img_url, width=120)
+            else:
+                st.markdown(
+                    "<div style='height:120px; background-color:#333; color:white; padding:10px; border-radius:5px; display:flex; align-items:center; justify-content:center; font-size:12px;'>Image missing</div>",
+                    unsafe_allow_html=True
+                )
+            st.markdown(f"**{df.loc[idx, 'Tên sản phẩm']}**")
+            st.caption(f"Loại: {df.loc[idx, 'Loại sản phẩm']}") # NEW: Hiển thị loại sản phẩm gợi ý
+            st.caption(f"{df.loc[idx, 'Mô tả'][:100]}...")
+            st.caption(f"Brand: {df.loc[idx, 'Thương hiệu']}")
+            st.caption(f"Price: {df.loc[idx, 'Giá']}")
+            st.info(f"Similarity: {rec['similarity']:.3f}")
+else:
+    st.warning(f"No similar products found in the same category ({df.loc[best_idx, 'Loại sản phẩm']}) above the threshold.")
