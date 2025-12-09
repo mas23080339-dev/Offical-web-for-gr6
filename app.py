@@ -100,27 +100,32 @@ item_similarity_matrix = cosine_similarity(tfidf_matrix)
 
 # ------------------- 4) Recommendation function -------------------
 def recommend_product_by_index(idx, top_k=5, threshold=0.1):
-    # FIX: Sử dụng .iloc để truy cập theo chỉ số vị trí (0..N-1)
-    main_product_category = df.iloc[idx]["Loại sản phẩm"]
+    # FIX 1: Chuyển idx (best_idx) thành integer rõ ràng để đảm bảo tương thích với .iloc
+    idx_int = int(idx)
     
-    scores = item_similarity_matrix[idx]
+    # Lấy Loại sản phẩm của sản phẩm gốc
+    main_product_category = df.iloc[idx_int]["Loại sản phẩm"]
+    
+    scores = item_similarity_matrix[idx_int]
     sorted_idx = scores.argsort()[::-1]
 
     recommendations = []
     count = 0
     for i in sorted_idx[1:]:  # Bỏ qua chính nó
-        # FIX: Sử dụng .iloc để truy cập theo chỉ số vị trí (0..N-1)
-        if df.iloc[i]["Loại sản phẩm"] != main_product_category:
+        # FIX 2: Chuyển i (chỉ số gợi ý) thành integer rõ ràng
+        i_int = int(i) 
+        
+        # Lọc: Chỉ xem xét các sản phẩm cùng loại
+        if df.iloc[i_int]["Loại sản phẩm"] != main_product_category:
             continue # Bỏ qua sản phẩm khác loại
 
-        if scores[i] < threshold or count >= top_k:
+        if scores[i_int] < threshold or count >= top_k:
             break
         
         recommendations.append({
-            "index": i,
-            "similarity": scores[i],
-            # FIX: Sử dụng .iloc để lấy dữ liệu
-            "data": df.iloc[i] 
+            "index": i_int, # Lưu chỉ số đã chuyển đổi
+            "similarity": scores[i_int],
+            "data": df.iloc[i_int] 
         })
         count += 1
     return recommendations
@@ -157,42 +162,44 @@ is_eval_mode = False
 if mode == "Search Mode (keyword)":
     query_text = st.text_input("Enter product name or description:")
     if query_text:
-        # best_idx là chỉ số vị trí (0..N-1)
+        # best_idx là chỉ số vị trí (0..N-1) (numpy.int64)
         best_idx, best_score = find_best_match(query_text)
         if best_score < threshold:
             st.warning("No product found matching the query.")
             best_idx = None
         else:
-            # FIX: Sử dụng .iloc để lấy Loại sản phẩm
-            category = df.iloc[best_idx]["Loại sản phẩm"]
-            st.info(f"Best match: {df.iloc[best_idx]['Tên sản phẩm']} (Loại: {category}, Similarity: {best_score:.3f})")
+            # FIX 3: Chuyển best_idx thành int trước khi truy cập
+            best_idx_int = int(best_idx)
+            category = df.iloc[best_idx_int]["Loại sản phẩm"]
+            st.info(f"Best match: {df.iloc[best_idx_int]['Tên sản phẩm']} (Loại: {category}, Similarity: {best_score:.3f})")
 
 elif mode == "Evaluation Mode (select product)":
     selected_product = st.selectbox("Select product:", df["Tên sản phẩm"].unique())
     if selected_product:
         is_eval_mode = True
-        # FIX: Tìm chỉ số vị trí (iloc) của sản phẩm được chọn
+        # best_idx là chỉ số vị trí (iloc) của sản phẩm được chọn (numpy.int64)
         best_idx = np.where(df["Tên sản phẩm"] == selected_product)[0][0]
         best_score = 1.0
 
 # Display main product
 if best_idx is not None:
-    # FIX: Sử dụng .iloc để lấy dữ liệu sản phẩm chính
-    st.subheader(f"Main Product: {df.iloc[best_idx]['Tên sản phẩm']}")
+    # FIX 4: Chuyển best_idx thành int trước khi truy cập
+    best_idx_int = int(best_idx)
+    st.subheader(f"Main Product: {df.iloc[best_idx_int]['Tên sản phẩm']}")
     col_img, col_info = st.columns([1, 3])
     with col_img:
-        image_url = df.iloc[best_idx]["Link ảnh"] if "Link ảnh" in df.columns else None
+        image_url = df.iloc[best_idx_int]["Link ảnh"] if "Link ảnh" in df.columns else None
         if image_url and image_url.strip():
             st.image(image_url, width=200)
         else:
             st.info("No image available.")
     with col_info:
-        # FIX: Sử dụng .iloc
-        st.markdown(f"**Name:** {df.iloc[best_idx]['Tên sản phẩm']}")
-        st.markdown(f"**Loại sản phẩm:** {df.iloc[best_idx]['Loại sản phẩm']}")
-        st.markdown(f"**Description:** {df.iloc[best_idx]['Mô tả']}")
-        st.markdown(f"**Brand:** {df.iloc[best_idx]['Thương hiệu']}")
-        st.markdown(f"**Price:** {df.iloc[best_idx]['Giá']} | **Rating:** {df.iloc[best_idx]['Điểm đánh giá']}")
+        # FIX 5: Sử dụng best_idx_int
+        st.markdown(f"**Name:** {df.iloc[best_idx_int]['Tên sản phẩm']}")
+        st.markdown(f"**Loại sản phẩm:** {df.iloc[best_idx_int]['Loại sản phẩm']}")
+        st.markdown(f"**Description:** {df.iloc[best_idx_int]['Mô tả']}")
+        st.markdown(f"**Brand:** {df.iloc[best_idx_int]['Thương hiệu']}")
+        st.markdown(f"**Price:** {df.iloc[best_idx_int]['Giá']} | **Rating:** {df.iloc[best_idx_int]['Điểm đánh giá']}")
         if is_eval_mode:
             st.success("Evaluation mode: Recommendations are based on this product.")
         else:
@@ -204,9 +211,8 @@ recs = recommend_product_by_index(best_idx, top_k, threshold)
 if recs:
     rec_cols = st.columns(min(len(recs), 4))
     for i, rec in enumerate(recs):
-        idx = rec["index"]
+        idx = rec["index"] # idx ở đây đã là int do hàm recommend_product_by_index trả về
         with rec_cols[i % len(rec_cols)]:
-            # FIX: Sử dụng .iloc để lấy dữ liệu sản phẩm gợi ý
             img_url = df.iloc[idx]["Link ảnh"] if "Link ảnh" in df.columns else None
             if img_url and img_url.strip():
                 st.image(img_url, width=120)
@@ -222,6 +228,9 @@ if recs:
             st.caption(f"Price: {df.iloc[idx]['Giá']}")
             st.info(f"Similarity: {rec['similarity']:.3f}")
 else:
-    # FIX: Sử dụng .iloc để lấy Loại sản phẩm
-    main_category = df.iloc[best_idx]["Loại sản phẩm"] if best_idx is not None else "Unknown"
+    # FIX 6: Chuyển best_idx thành int trước khi truy cập
+    if best_idx is not None:
+        main_category = df.iloc[int(best_idx)]["Loại sản phẩm"]
+    else:
+        main_category = "Unknown"
     st.warning(f"No similar products found in the same category ({main_category}) above the threshold.")
