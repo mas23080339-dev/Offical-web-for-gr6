@@ -8,14 +8,14 @@ from sklearn.metrics.pairwise import cosine_similarity
 # ==========================================================================================
 # CONFIG
 # ==========================================================================================
-st.set_page_config(page_title="Demo CBF Hybrid", layout="wide")
+st.set_page_config(page_title="Demo CBF Recommendation system", layout="wide")
 
 # ==========================================================================================
 # LOAD DATA
 # ==========================================================================================
 @st.cache_data
 def load_data():
-    df = pd.read_excel("Database-group2-1.xlsx")
+    df = pd.read_excel("Gr6.csv")
 
     # Chuẩn hóa text tránh lỗi TF-IDF
     df["Tên sản phẩm"] = df["Tên sản phẩm"].fillna("").astype(str)
@@ -84,7 +84,7 @@ def filter_same_category(idx, sims, top_k=10, threshold=0.15):
 # ==========================================================================================
 # STREAMLIT UI
 # ==========================================================================================
-st.title("🔍 Content-Based Filtering Recommendation Demo")
+st.title("Content-Based Filtering Recommendation Demo")
 
 query = st.text_input("Enter the product you want to search for:")
 
@@ -110,7 +110,7 @@ if query.strip() != "":
     # ======================================================================================
     rec_df = filter_same_category(best_idx, sims, top_k, threshold)
 
-    st.subheader("🎯 Recommended products")
+    st.subheader("Recommended products")
 
     for i, row in rec_df.iterrows():
         with st.container(border=True):
